@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#f5f4ef">
+  <title>Afterclass | 放課後の予定帳</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Shippori+Mincho:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Afterclass ホーム">
+        <span class="brand-mark">a</span>
+        <span>afterclass</span>
+      </a>
+      <nav class="topnav" aria-label="メインメニュー">
+        <a class="active" href="#calendar">カレンダー</a>
+        <a href="#friends">友だち <span class="nav-count">4</span></a>
+      </nav>
+      <div class="profile-area">
+        <button class="icon-button notification-button" aria-label="通知"><span class="bell-icon">♢</span><i></i></button>
+        <div class="profile"><span class="avatar">み</span><span class="profile-name">みつき</span><span class="chevron">⌄</span></div>
+      </div>
+    </header>
+
+    <main class="content" id="calendar">
+      <section class="intro-row">
+        <div>
+          <p class="eyebrow">MY SCHEDULE <span></span> 2025</p>
+          <h1>予定を合わせて、<br><em>放課後をもっと楽しく。</em></h1>
+        </div>
+        <button class="primary-button" id="openModal"><span>＋</span> 予定を追加</button>
+      </section>
+
+      <section class="calendar-layout">
+        <div class="calendar-card">
+          <div class="calendar-toolbar">
+            <div class="month-heading"><button class="month-arrow" id="prevMonth" aria-label="前の月">‹</button><h2 id="monthLabel"></h2><button class="month-arrow" id="nextMonth" aria-label="次の月">›</button></div>
+            <div class="view-controls"><button class="today-button" id="todayButton">今日</button><div class="view-toggle"><button class="selected">月</button><button>週</button></div></div>
+          </div>
+          <div class="weekday-row"><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="weekend">土</span><span class="weekend">日</span></div>
+          <div class="calendar-grid" id="calendarGrid"></div>
+        </div>
+
+        <aside class="side-panel">
+          <div class="side-heading"><div><p class="eyebrow">UP NEXT</p><h2>これからの予定</h2></div><button class="more-button" aria-label="予定をもっと見る">•••</button></div>
+          <div class="upcoming-list" id="upcomingList"></div>
+          <button class="text-button" id="showAll">すべての予定を見る <span>→</span></button>
+          <div class="friends-box" id="friends"><div class="friends-title"><h3>友だちの予定</h3><span>4人</span></div><div class="friend-avatars"><span class="friend-avatar coral">あ</span><span class="friend-avatar yellow">ゆ</span><span class="friend-avatar blue">け</span><span class="friend-avatar green">＋</span></div><p>友だちの空き時間をチェックしよう。</p></div>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <button class="modal-close" id="closeModal" aria-label="閉じる">×</button>
+      <p class="eyebrow">NEW PLAN</p><h2 id="modalTitle">予定を追加する</h2>
+      <form id="eventForm"><label>予定のタイトル<input id="eventTitle" type="text" placeholder="例：図書館で勉強" required></label><div class="form-row"><label>日付<input id="eventDate" type="date" required></label><label>時間<input id="eventTime" type="time" value="16:30"></label></div><label>カテゴリー<select id="eventCategory"><option value="study">勉強</option><option value="play">遊び</option><option value="club">部活</option><option value="food">ごはん</option></select></label><button class="primary-button submit-button" type="submit">予定を保存する</button></form>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
