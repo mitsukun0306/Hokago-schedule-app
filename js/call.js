@@ -1,10 +1,12 @@
-// グループ通話（WebRTC メッシュ接続。シグナリングはサーバー経由）
-import { api, auth, clientId } from './api.js';
+// グループ通話（WebRTC メッシュ接続。シグナリングは Firestore 経由）
+import * as backend from './backend.js';
+import { clientId } from './backend.js';
+import { iceServers as configuredIceServers } from './firebase-config.js';
 import { state, notify, userName, userColor } from './state.js';
 import { $, esc, formatDuration } from './utils.js';
 import { icons, toast, toastError, confirmDialog } from './ui.js';
 
-let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
+const iceServers = configuredIceServers ?? [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }];
 let active = null;
 const tiles = new Map(); // 'local' | clientId -> element
 
@@ -12,14 +14,6 @@ const AUDIO_CONSTRAINTS = { echoCancellation: true, noiseSuppression: true, auto
 const VIDEO_CONSTRAINTS = { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' };
 
 export const currentCall = () => active;
-
-export async function loadCallConfig() {
-  try {
-    iceServers = (await api('GET', '/api/config')).iceServers;
-  } catch {
-    /* 既定の STUN を使う */
-  }
-}
 
 export function initCall() {
   const overlay = $('#callOverlay');
@@ -37,13 +31,7 @@ export function initCall() {
   });
   $('#callPill').addEventListener('click', () => minimize(false));
   window.addEventListener('pagehide', () => {
-    if (!active?.joined) return;
-    fetch(`/api/groups/${active.groupId}/call/leave`, {
-      method: 'POST',
-      keepalive: true,
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.token}` },
-      body: JSON.stringify({ clientId }),
-    }).catch(() => {});
+    if (active?.joined) backend.callLeaveOnUnload();
   });
 }
 
@@ -96,11 +84,15 @@ export async function startCall(groupId, kind = 'audio') {
   if (active !== session) return stopMedia(session); // 準備中にキャンセルされた
 
   try {
-    const { participants, startedAt } = await api('POST', `/api/groups/${groupId}/call/join`, { clientId, kind });
-    if (active !== session) return undefined;
+    const { joinedAt, startedAt } = await backend.callJoin(groupId, kind);
+    if (active !== session) {
+      backend.callLeave(groupId).catch(() => {});
+      return undefined;
+    }
     session.joined = true;
+    session.joinedAt = joinedAt;
     session.startedAt = startedAt;
-    for (const participant of participants) connectTo(participant.clientId, participant.userId);
+    syncPeers(state.calls.get(groupId)?.participants ?? []);
     renderShell();
     renderTiles();
   } catch (error) {
@@ -130,7 +122,7 @@ async function acquireMedia(session, kind) {
 export async function leaveCall() {
   const session = active;
   if (!session) return;
-  if (session.joined) api('POST', `/api/groups/${session.groupId}/call/leave`, { clientId }).catch(() => {});
+  if (session.joined) backend.callLeave(session.groupId).catch(() => {});
   teardown(session);
 }
 
@@ -152,8 +144,9 @@ function stopMedia(session) {
 // --- シグナリング -----------------------------------------------------------------
 
 function sendSignal(to, data) {
-  if (!active) return;
-  api('POST', '/api/signal', { groupId: active.groupId, clientId, to, data }).catch(() => {});
+  const peer = active?.peers.get(to);
+  if (!peer) return;
+  backend.sendSignal(active.groupId, to, peer.userId, data);
 }
 
 const currentVideoTrack = () => (active.screenOn ? active.screenTrack : active.camOn ? active.camTrack : null);
@@ -251,30 +244,40 @@ async function flushCandidates(peer) {
   for (const candidate of pending) await peer.pc.addIceCandidate(candidate).catch(() => {});
 }
 
-/** サーバーから届いた通話の参加者一覧に合わせる */
+/** 参加者一覧（Firestore から届く）に合わせて接続を作る・切る */
 export function handleCallState(callState) {
-  state.calls.set(callState.groupId, callState);
   if (!active || active.groupId !== callState.groupId) return;
-  const present = new Set(callState.participants.map((p) => p.clientId));
+  syncPeers(callState.participants);
+  if (active.joined && !callState.participants.some((p) => p.clientId === clientId)) {
+    // 通信が長く途切れて、ほかの人から退出扱いにされた場合
+    const session = active;
+    setTimeout(() => {
+      const latest = state.calls.get(session.groupId);
+      if (active === session && !latest?.participants.some((p) => p.clientId === clientId)) {
+        toast('通信が途切れたため通話から退出しました', { type: 'error' });
+        leaveCall();
+      }
+    }, 3000);
+  }
+  renderTiles();
+  renderShell();
+}
+
+function syncPeers(participants) {
+  if (!active?.joined) return;
+  const present = new Set(participants.map((p) => p.clientId));
   for (const [id, peer] of active.peers) {
     if (!present.has(id)) {
       peer.pc.close();
       active.peers.delete(id);
     }
   }
-  if (active.joined && !present.has(clientId)) {
-    // 通信が長く途切れてサーバー側で退出扱いになった場合
-    const session = active;
-    setTimeout(() => {
-      const latest = state.calls.get(session.groupId);
-      if (active === session && !latest?.participants.some((p) => p.clientId === clientId)) {
-        toast('通信が途切れたため通話から退出しました', { type: 'error' });
-        teardown(session);
-      }
-    }, 3000);
+  // 同時に参加しても片方だけが接続を申し込むよう、あとから参加した側が申し込む
+  for (const p of participants) {
+    if (p.clientId === clientId || active.peers.has(p.clientId)) continue;
+    const iJoinedLater = active.joinedAt > p.joinedAt || (active.joinedAt === p.joinedAt && clientId > p.clientId);
+    if (iJoinedLater) connectTo(p.clientId, p.userId);
   }
-  renderTiles();
-  renderShell();
 }
 
 function broadcastState() {

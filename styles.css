@@ -586,3 +586,14 @@ body[data-view="chat"] .content { padding-bottom: 24px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* --- ログイン（Firebase） ------------------------------------------------------ */
+.login-divider { display: flex; align-items: center; gap: 12px; margin: 20px 0 14px; color: var(--faint); font-size: 11px; }
+.login-divider::before, .login-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.google-button { width: 100%; padding: 12px; font-size: 13px; }
+.login-note { margin: 12px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.login-card code { padding: 1px 5px; border-radius: 3px; background: #efeee8; font-size: 11px; }
+.loading-mark { display: flex; flex-direction: column; align-items: center; gap: 14px; color: var(--muted); font-size: 12px; }
+.loading-mark .brand-mark { width: 44px; height: 44px; font-size: 30px; animation: pulse 1.4s ease-in-out infinite; }
+.profile-menu button:disabled { opacity: 1; color: var(--muted); cursor: default; }
+.profile-menu button:disabled:hover { background: none; }

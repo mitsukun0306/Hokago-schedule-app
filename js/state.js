@@ -7,7 +7,9 @@ export const state = {
   events: new Map(),
   messages: new Map(), // groupId -> message[]
   calls: new Map(), // groupId -> { participants, startedAt }
-  connected: false,
+  connected: true,
+  groupsLoaded: false,
+  eventsReady: new Set(),
 
   view: 'calendar',
   calendarMode: storage.get('afterclass.calendarMode', 'month'),
@@ -36,18 +38,20 @@ export function notify() {
   });
 }
 
-export function loadBootstrap(data) {
-  state.me = data.me;
-  state.users = new Map(data.users.map((u) => [u.id, u]));
-  state.groups = new Map(data.groups.map((g) => [g.id, g]));
-  state.events = new Map(data.events.map((e) => [e.id, e]));
-  state.messages = new Map(Object.entries(data.messages));
-  state.calls = new Map(data.calls.map((c) => [c.groupId, c]));
-  if (state.sourceFilter !== 'all' && state.sourceFilter !== 'personal' && !state.groups.has(state.sourceFilter)) {
-    state.sourceFilter = 'all';
-  }
-  if (state.activeChat && !state.groups.has(state.activeChat)) state.activeChat = null;
-  notify();
+/** ログアウト時などにデータを空にする */
+export function resetState() {
+  state.me = null;
+  state.users = new Map();
+  state.groups = new Map();
+  state.events = new Map();
+  state.messages = new Map();
+  state.calls = new Map();
+  state.notifications = [];
+  state.activeChat = null;
+  state.sourceFilter = 'all';
+  state.groupsLoaded = false;
+  state.eventsReady = new Set();
+  lastRead = null;
 }
 
 export const userName = (id) => (id === state.me?.id ? state.me.name : state.users.get(id)?.name ?? '退出したメンバー');
@@ -92,6 +96,3 @@ export function unreadCount(groupId) {
   ).length;
 }
 
-export function resetSessionCaches() {
-  lastRead = null;
-}

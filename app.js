@@ -1,211 +1,131 @@
 // Afterclass — エントリーポイント
-import { api, auth, connectStream } from './js/api.js';
-import { state, subscribe, notify, loadBootstrap, userName, unreadCount, groupList, resetSessionCaches } from './js/state.js';
-import { $, esc, storage, todayKey, addDays, expandEvents, toMinutes, formatClock, copyText, formatDateJa, formatTimeRange } from './js/utils.js';
+import * as backend from './js/backend.js';
+import { state, subscribe, notify, userName, unreadCount, groupList, resetState } from './js/state.js';
+import { $, esc, storage, todayKey, addDays, expandEvents, toMinutes, formatClock, formatDateJa, formatTimeRange } from './js/utils.js';
 import { icons, avatar, toast, toastError, openModal, closeModal, isModalOpen, confirmDialog, withBusy } from './js/ui.js';
 import { initCalendar, renderCalendar } from './js/calendar.js';
 import { initSchedule, renderSchedule } from './js/schedule.js';
 import { initChat, renderChat, tickChatTimers } from './js/chat.js';
 import { initGroups, renderGroups, handleInviteParam, removeGroupLocally } from './js/groups.js';
-import { initCall, loadCallConfig, handleSignal, handleCallState, currentCall, startCall, tickCall, leaveCall } from './js/call.js';
+import { initCall, handleSignal, handleCallState, currentCall, startCall, tickCall, leaveCall } from './js/call.js';
 import { openEventDetail, refreshEventDetail } from './js/events.js';
 
 const VIEWS = ['calendar', 'schedule', 'chat', 'groups'];
-let stream = null;
-let hasConnectedOnce = false;
+const params = new URLSearchParams(location.search);
+let pendingInvite = params.get('join');
+let pendingEvent = params.get('event');
+let signedInUid = null;
 
 // --- ログイン -------------------------------------------------------------------
 
-function showLogin(pendingInvite) {
-  $('#appShell').hidden = true;
-  const screen = $('#login');
-  screen.hidden = false;
-  if (pendingInvite) {
-    api('GET', `/api/invites/${pendingInvite.replace(/[^A-Za-z0-9]/g, '')}`)
-      .then(({ group }) => {
-        const note = $('#loginInvite');
-        note.hidden = false;
-        note.innerHTML = `${icons.users}<span><strong>${esc(group.name)}</strong> に招待されています。<br>ニックネームを決めて参加しよう。</span>`;
-      })
-      .catch(() => {});
-  }
+function showScreen(name) {
+  $('#setup').hidden = name !== 'setup';
+  $('#login').hidden = name !== 'login';
+  $('#loading').hidden = name !== 'loading';
+  $('#appShell').hidden = name !== 'app';
+}
+
+function showLogin() {
+  showScreen('login');
+  const note = $('#loginInvite');
+  note.hidden = !pendingInvite;
+  note.innerHTML = `${icons.users}<span>グループに招待されています。<br>ログインすると参加できます。</span>`;
   $('#loginName').focus();
 }
 
 function initLogin() {
-  $('#loginToggle').addEventListener('click', () => {
-    const codeMode = $('#loginForm').dataset.mode !== 'code';
-    $('#loginForm').dataset.mode = codeMode ? 'code' : 'name';
-    $('#loginNameField').hidden = codeMode;
-    $('#loginCodeField').hidden = !codeMode;
-    $('#loginToggle').textContent = codeMode ? 'ニックネームで新しくはじめる' : 'ほかの端末で使っていた人（ログインコード）';
-    (codeMode ? $('#loginCode') : $('#loginName')).focus();
-  });
+  const error = $('#loginError');
+  const fail = (err) => {
+    error.textContent = err.message;
+    error.hidden = false;
+  };
   $('#loginForm').addEventListener('submit', (e) => {
     e.preventDefault();
-    const codeMode = e.target.dataset.mode === 'code';
-    const payload = codeMode ? { code: $('#loginCode').value.trim() } : { name: $('#loginName').value.trim() };
-    const error = $('#loginError');
-    if (!payload.code && !payload.name) {
-      error.textContent = codeMode ? 'ログインコードを入力してください' : 'ニックネームを入力してください';
-      error.hidden = false;
-      return;
-    }
-    withBusy($('#loginForm button[type="submit"]'), async () => {
-      try {
-        const { token } = await api('POST', '/api/login', payload);
-        auth.set(token);
-        error.hidden = true;
-        await start();
-      } catch (err) {
-        error.textContent = err.message;
-        error.hidden = false;
-      }
-    });
+    error.hidden = true;
+    withBusy($('#loginForm button[type="submit"]'), () => backend.startAsGuest($('#loginName').value).catch(fail));
+  });
+  $('#googleLogin').addEventListener('click', (e) => {
+    error.hidden = true;
+    withBusy(e.currentTarget, () => backend.signInWithGoogle().catch(fail));
   });
 }
 
 // --- 起動 -----------------------------------------------------------------------
 
-async function start() {
-  const params = new URLSearchParams(location.search);
-  const invite = params.get('join');
-  const eventParam = params.get('event');
-  if (!auth.token) {
-    showLogin(invite);
+function onAuthChanged(user) {
+  if (!user) {
+    signedInUid = null;
+    backend.stopSync();
+    resetState();
+    showLogin();
     return;
   }
-  try {
-    loadBootstrap(await api('GET', '/api/bootstrap'));
-  } catch (error) {
-    if (error.status === 401) {
-      auth.clear();
-      showLogin(invite);
-      return;
-    }
-    $('#appShell').hidden = true;
-    $('#login').hidden = false;
-    $('#loginError').textContent = `${error.message}（python3 server.py でサーバーを起動してから開いてください）`;
-    $('#loginError').hidden = false;
-    return;
-  }
-  $('#login').hidden = true;
-  $('#appShell').hidden = false;
-  if (invite || eventParam) history.replaceState(null, '', location.pathname + location.hash);
-  renderProfile();
-  onRoute();
-  openStream();
-  loadCallConfig();
-  if (invite) handleInviteParam(invite);
-  if (eventParam) openEventDetail(eventParam);
-}
-
-function openStream() {
-  stream?.stop();
-  stream = connectStream({
-    onEvent: handleServerEvent,
-    onOpen: async () => {
-      state.connected = true;
-      $('#connectionBanner').hidden = true;
-      if (hasConnectedOnce) {
-        // 切断中に届かなかった変更を取り込む
-        try {
-          loadBootstrap(await api('GET', '/api/bootstrap'));
-        } catch {
-          /* 次の再接続で再試行 */
-        }
-      }
-      hasConnectedOnce = true;
+  if (signedInUid === user.uid) return;
+  signedInUid = user.uid;
+  showScreen('loading');
+  backend.startSync(user.uid, {
+    onReady: onSyncReady,
+    onMe: () => {
+      renderProfile();
+      if (!$('#loading').hidden && state.groupsLoaded) onSyncReady();
     },
-    onDisconnect: () => {
-      state.connected = false;
-      $('#connectionBanner').hidden = false;
-    },
-    onUnauthorized: () => logout(true),
+    onNewEvent,
+    onMessage,
+    onCallState,
+    onSignal: handleSignal,
+    onGroupRemoved: (groupId) => removeGroupLocally(groupId),
+    onEventsChanged: refreshEventDetail,
+    onError: (err) => toast(err.message, { type: 'error', duration: 6000 }),
   });
 }
 
-// --- サーバーからのリアルタイムイベント --------------------------------------------
+let appShown = false;
+function onSyncReady() {
+  if (!state.me) return; // プロフィールが届くのを待つ
+  if (appShown && !$('#appShell').hidden) return;
+  appShown = true;
+  showScreen('app');
+  renderProfile();
+  onRoute();
+  if (pendingInvite || pendingEvent) history.replaceState(null, '', location.pathname + location.hash);
+  if (pendingInvite) handleInviteParam(pendingInvite);
+  if (pendingEvent) setTimeout(() => openEventDetail(pendingEvent), 800);
+  pendingInvite = null;
+  pendingEvent = null;
+}
 
-function handleServerEvent({ type, payload }) {
-  const me = state.me?.id;
-  switch (type) {
-    case 'event.upsert': {
-      const isNew = !state.events.has(payload.event.id);
-      state.events.set(payload.event.id, payload.event);
-      if (isNew && payload.event.ownerId !== me && payload.event.groupId) {
-        const group = state.groups.get(payload.event.groupId);
-        pushNotification({
-          text: `${userName(payload.event.ownerId)}さんが「${group?.name}」に予定「${payload.event.title}」を追加しました`,
-          action: { type: 'event', id: payload.event.id },
-        });
-      }
-      refreshEventDetail();
-      break;
-    }
-    case 'event.delete':
-      state.events.delete(payload.id);
-      refreshEventDetail();
-      break;
-    case 'message.new': {
-      const { message } = payload;
-      const list = state.messages.get(message.groupId) ?? [];
-      if (!list.some((m) => m.id === message.id)) list.push(message);
-      state.messages.set(message.groupId, list);
-      const viewing = state.view === 'chat' && state.activeChat === message.groupId && !document.hidden;
-      if (message.userId !== me && message.kind !== 'system' && message.kind !== 'call' && !viewing) {
-        const group = state.groups.get(message.groupId);
-        const text = message.kind === 'event' ? `📅 予定を共有しました` : message.text;
-        pushNotification({ text: `${group?.name} · ${userName(message.userId)}: ${text}`, action: { type: 'chat', id: message.groupId }, silent: true });
-        browserNotify(`${userName(message.userId)}（${group?.name}）`, text, message.groupId);
-      }
-      break;
-    }
-    case 'message.update': {
-      const list = state.messages.get(payload.message.groupId) ?? [];
-      const index = list.findIndex((m) => m.id === payload.message.id);
-      if (index >= 0) list[index] = payload.message;
-      break;
-    }
-    case 'group.update': {
-      state.groups.set(payload.group.id, payload.group);
-      payload.users.forEach((user) => state.users.set(user.id, user));
-      break;
-    }
-    case 'group.remove':
-      removeGroupLocally(payload.groupId);
-      break;
-    case 'user.update':
-      state.users.set(payload.user.id, payload.user);
-      if (payload.user.id === me) {
-        state.me = payload.user;
-        renderProfile();
-      }
-      break;
-    case 'call.state': {
-      const before = state.calls.get(payload.groupId)?.participants.length ?? 0;
-      handleCallState(payload);
-      const after = payload.participants;
-      const starter = after[0];
-      if (!before && after.length && starter.userId !== me && currentCall()?.groupId !== payload.groupId) {
-        const group = state.groups.get(payload.groupId);
-        const label = starter.kind === 'video' ? 'ビデオ通話' : '音声通話';
-        toast(`${userName(starter.userId)}さんが「${group?.name}」で${label}を始めました`, {
-          duration: 15000,
-          actions: [{ label: '参加する', onClick: () => startCall(payload.groupId, starter.kind) }],
-        });
-        pushNotification({ text: `「${group?.name}」で${label}が始まりました`, action: { type: 'chat', id: payload.groupId } });
-        browserNotify(`「${group?.name}」で${label}中`, `${userName(starter.userId)}さんが通話を始めました`, payload.groupId);
-      }
-      break;
-    }
-    case 'signal':
-      handleSignal(payload);
-      return;
-    default:
-      return;
-  }
-  notify();
+// --- リアルタイムの通知 ----------------------------------------------------------
+
+function onNewEvent(event) {
+  if (!event.groupId) return;
+  const group = state.groups.get(event.groupId);
+  pushNotification({
+    text: `${userName(event.ownerId)}さんが「${group?.name}」に予定「${event.title}」を追加しました`,
+    action: { type: 'event', id: event.id },
+  });
+}
+
+function onMessage(message) {
+  const viewing = state.view === 'chat' && state.activeChat === message.groupId && !document.hidden;
+  if (message.userId === state.me?.id || message.kind === 'system' || message.kind === 'call' || viewing) return;
+  const group = state.groups.get(message.groupId);
+  const text = message.kind === 'event' ? '📅 予定を共有しました' : message.text;
+  pushNotification({ text: `${group?.name} · ${userName(message.userId)}: ${text}`, action: { type: 'chat', id: message.groupId } });
+  browserNotify(`${userName(message.userId)}（${group?.name}）`, text, message.groupId);
+}
+
+function onCallState(callState, before) {
+  handleCallState(callState);
+  const starter = callState.participants[0];
+  if (before || !starter || starter.userId === state.me?.id || currentCall()?.groupId === callState.groupId) return;
+  const group = state.groups.get(callState.groupId);
+  const label = starter.kind === 'video' ? 'ビデオ通話' : '音声通話';
+  toast(`${userName(starter.userId)}さんが「${group?.name}」で${label}を始めました`, {
+    duration: 15000,
+    actions: [{ label: '参加する', onClick: () => startCall(callState.groupId, starter.kind) }],
+  });
+  pushNotification({ text: `「${group?.name}」で${label}が始まりました`, action: { type: 'chat', id: callState.groupId } });
+  browserNotify(`「${group?.name}」で${label}中`, `${userName(starter.userId)}さんが通話を始めました`, callState.groupId);
 }
 
 // --- 通知 -----------------------------------------------------------------------
@@ -330,7 +250,12 @@ function checkReminders() {
 // --- プロフィール ----------------------------------------------------------------
 
 function renderProfile() {
+  if (!state.me) return;
   $('#profileButton').innerHTML = `${avatar(state.me.id)}<span class="profile-name">${esc(state.me.name)}</span><span class="chevron">⌄</span>`;
+  const user = backend.currentAuthUser();
+  const linked = user && !user.isAnonymous;
+  $('#linkGoogle').textContent = linked ? `Google で連携済み（${user.email ?? ''}）` : 'Google と連携（ほかの端末でも使う）';
+  $('#linkGoogle').disabled = Boolean(linked);
 }
 
 function initProfile() {
@@ -338,6 +263,7 @@ function initProfile() {
     e.stopPropagation();
     $('#notifPanel').hidden = true;
     const menu = $('#profileMenu');
+    renderProfile();
     menu.hidden = !menu.hidden;
     $('#profileButton').setAttribute('aria-expanded', String(!menu.hidden));
   });
@@ -347,7 +273,15 @@ function initProfile() {
     if (!action) return;
     $('#profileMenu').hidden = true;
     if (action === 'rename') openRename();
-    if (action === 'code') openLoginCode();
+    if (action === 'link') {
+      try {
+        await backend.linkGoogle();
+        renderProfile();
+        toast('Google アカウントと連携しました。ほかの端末でも「Google でログイン」で使えます', { type: 'success', duration: 6000 });
+      } catch (error) {
+        toastError(error);
+      }
+    }
     if (action === 'notify') {
       if (!('Notification' in window)) return toast('このブラウザは通知に対応していません', { type: 'error' });
       const result = await Notification.requestPermission();
@@ -355,7 +289,15 @@ function initProfile() {
       renderNotifications();
     }
     if (action === 'logout') {
-      const ok = await confirmDialog({ title: 'ログアウトしますか？', message: 'もう一度使うにはログインコードが必要です。先に「ログインコード」を控えておいてください。', confirmLabel: 'ログアウト', danger: true });
+      const guest = backend.currentAuthUser()?.isAnonymous;
+      const ok = await confirmDialog({
+        title: 'ログアウトしますか？',
+        message: guest
+          ? 'ゲストのままログアウトすると、このアカウントには二度と戻れません。続けて使うなら、先に「Google と連携」してください。'
+          : 'もう一度「Google でログイン」すれば元に戻れます。',
+        confirmLabel: 'ログアウト',
+        danger: true,
+      });
       if (ok) logout();
     }
     return undefined;
@@ -371,11 +313,7 @@ function openRename() {
     e.preventDefault();
     withBusy($('.submit-button', body), async () => {
       try {
-        const { user } = await api('PATCH', '/api/me', { name: e.target.name.value });
-        state.me = user;
-        state.users.set(user.id, user);
-        renderProfile();
-        notify();
+        await backend.updateMyName(e.target.name.value);
         closeModal();
         toast('ニックネームを変更しました', { type: 'success' });
       } catch (error) {
@@ -385,30 +323,15 @@ function openRename() {
   });
 }
 
-function openLoginCode() {
-  const body = openModal(`
-    <p class="eyebrow">LOGIN CODE</p><h2 id="modalTitle">ログインコード</h2>
-    <p class="modal-lead">ほかの端末で同じアカウントを使うときに入力するコードです。<strong>パスワードと同じなので、人には教えないでください。</strong></p>
-    <div class="secret-box"><code id="secretCode">••••••••••••••••••••</code><button class="ghost-button small" data-reveal>表示</button></div>
-    <button class="primary-button submit-button" data-copy>${icons.copy} コピーする</button>`);
-  body.addEventListener('click', async (e) => {
-    if (e.target.closest('[data-reveal]')) $('#secretCode', body).textContent = auth.token;
-    if (e.target.closest('[data-copy]') && (await copyText(auth.token))) toast('コピーしました', { type: 'success' });
-  });
-}
-
-async function logout(expired = false) {
+async function logout() {
   await leaveCall();
-  stream?.stop();
-  stream = null;
-  hasConnectedOnce = false;
-  auth.clear();
-  resetSessionCaches();
-  state.me = null;
-  state.notifications = [];
   closeModal();
-  if (expired) toast('ログインの有効期限が切れました。もう一度ログインしてください', { type: 'error' });
-  showLogin();
+  appShown = false;
+  try {
+    await backend.logout();
+  } catch (error) {
+    toastError(error);
+  }
 }
 
 // --- 画面切り替え ----------------------------------------------------------------
@@ -480,7 +403,14 @@ function init() {
       notify();
     }
   }, 60000);
-  start();
+  window.addEventListener('offline', () => ($('#connectionBanner').hidden = false));
+  window.addEventListener('online', () => ($('#connectionBanner').hidden = true));
+  $('#connectionBanner').hidden = navigator.onLine;
+  if (!backend.isConfigured) {
+    showScreen('setup');
+    return;
+  }
+  backend.watchAuth(onAuthChanged);
 }
 
 init();

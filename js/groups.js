@@ -1,6 +1,6 @@
 // グループ管理・招待（共有）・空き時間チェック
-import { api } from './api.js';
-import { state, notify, groupList, userName, loadBootstrap } from './state.js';
+import * as backend from './backend.js';
+import { state, notify, groupList, userName } from './state.js';
 import {
   $, esc, todayKey, addDays, formatDateJa, expandEvents, span, fromMinutes, copyText,
 } from './utils.js';
@@ -84,8 +84,7 @@ export function openCreateGroup() {
     e.preventDefault();
     withBusy($('.submit-button', body), async () => {
       try {
-        const { group } = await api('POST', '/api/groups', { name: e.target.name.value });
-        state.groups.set(group.id, group);
+        const group = await backend.createGroup(e.target.name.value);
         notify();
         openInvite(group.id, true);
       } catch (error) {
@@ -129,10 +128,9 @@ export function openJoinGroup(prefill = '') {
 }
 
 export async function joinByCode(code) {
-  const clean = code.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
-  if (clean.length < 4) throw new Error('招待コードを正しく入力してください');
-  const { group, joined } = await api('POST', `/api/invites/${clean}/join`);
-  loadBootstrap(await api('GET', '/api/bootstrap'));
+  const { group, joined } = await backend.joinGroup(code);
+  // 参加したグループのデータが届くまで少し待つ
+  for (let i = 0; i < 50 && !state.groups.has(group.id); i += 1) await new Promise((resolve) => setTimeout(resolve, 100));
   closeModal();
   toast(joined ? `「${group.name}」に参加しました` : `すでに「${group.name}」のメンバーです`, { type: 'success' });
   state.activeChat = group.id;
@@ -142,14 +140,14 @@ export async function joinByCode(code) {
 /** 招待リンク経由で開いたとき */
 export async function handleInviteParam(code) {
   try {
-    const { group } = await api('GET', `/api/invites/${code.replace(/[^A-Za-z0-9]/g, '').toUpperCase()}`);
+    const group = await backend.invitePreview(code);
     if (state.groups.has(group.id)) {
       toast(`すでに「${group.name}」のメンバーです`);
       return;
     }
     const ok = await confirmDialog({
       title: `「${group.name}」に参加しますか？`,
-      message: `現在 ${group.memberCount} 人のメンバーがいます。参加するとグループの予定・チャット・通話を共有します。`,
+      message: '参加するとグループの予定・チャット・通話をメンバーと共有します。',
       confirmLabel: '参加する',
     });
     if (ok) await joinByCode(code);
@@ -218,9 +216,7 @@ function openGroupSettings(groupId) {
     e.preventDefault();
     withBusy($('.submit-button', body), async () => {
       try {
-        const { group: updated } = await api('PATCH', `/api/groups/${groupId}`, { name: e.target.name.value });
-        state.groups.set(updated.id, updated);
-        notify();
+        await backend.renameGroup(groupId, e.target.name.value);
         toast('グループ名を変更しました', { type: 'success' });
       } catch (error) {
         toastError(error);
@@ -233,8 +229,7 @@ function openGroupSettings(groupId) {
       const ok = await confirmDialog({ title: '招待コードを作り直しますか？', message: '今のリンクとコードは使えなくなります。', confirmLabel: '作り直す' });
       if (!ok) return;
       try {
-        const { group: updated } = await api('POST', `/api/groups/${groupId}/invite`);
-        state.groups.set(updated.id, updated);
+        await backend.regenerateInvite(groupId);
         notify();
         openInvite(groupId);
       } catch (error) {
@@ -244,7 +239,7 @@ function openGroupSettings(groupId) {
       const ok = await confirmDialog({ title: `「${group.name}」から退出しますか？`, confirmLabel: '退出する', danger: true });
       if (!ok) return;
       try {
-        await api('POST', `/api/groups/${groupId}/leave`);
+        await backend.leaveGroup(groupId);
         removeGroupLocally(groupId);
         closeModal();
         toast('グループから退出しました');
@@ -289,7 +284,7 @@ export function openAvailability({ groupId, date } = {}) {
   const load = async () => {
     $('#availabilityResult', body).innerHTML = '<p class="empty-text">読み込み中…</p>';
     try {
-      busyData = await api('GET', `/api/groups/${current.groupId}/busy`);
+      busyData = await backend.groupBusy(current.groupId);
       render();
     } catch (error) {
       $('#availabilityResult', body).innerHTML = `<p class="form-error">${esc(error.message)}</p>`;
