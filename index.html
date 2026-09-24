@@ -2,9 +2,8 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#f5f4ef">
-  <meta name="description" content="友だちと放課後や休日の予定をゆるく共有できるアプリ。カレンダー・グループチャット・通話つき。">
   <title>Afterclass | 放課後の予定帳</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,101 +11,58 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <!-- ログイン -->
-  <div class="login-screen" id="login" hidden>
-    <div class="login-card">
-      <a class="brand" href="/" aria-label="Afterclass"><span class="brand-mark">a</span><span>afterclass</span></a>
-      <p class="eyebrow">AFTER SCHOOL <span></span> PLANNER</p>
-      <h1>予定を合わせて、<br><em>放課後をもっと楽しく。</em></h1>
-      <p class="login-lead">カレンダー・グループチャット・通話で、友だちとの予定をかんたんに調整しよう。</p>
-      <div class="login-invite" id="loginInvite" hidden></div>
-      <form id="loginForm" class="form" data-mode="name" novalidate>
-        <label id="loginNameField">ニックネーム<input id="loginName" maxlength="20" placeholder="例：みつき" autocomplete="nickname"></label>
-        <label id="loginCodeField" hidden>ログインコード<input id="loginCode" autocomplete="off" placeholder="ほかの端末で表示したコード"></label>
-        <p class="form-error" id="loginError" role="alert" hidden></p>
-        <button class="primary-button submit-button" type="submit">はじめる</button>
-      </form>
-      <button class="link-button" id="loginToggle" type="button">ほかの端末で使っていた人（ログインコード）</button>
-    </div>
-  </div>
-
-  <div class="app-shell" id="appShell" hidden>
+  <div class="app-shell">
     <header class="topbar">
-      <a class="brand" href="#calendar" aria-label="Afterclass ホーム">
+      <a class="brand" href="#" aria-label="Afterclass ホーム">
         <span class="brand-mark">a</span>
         <span>afterclass</span>
       </a>
       <nav class="topnav" aria-label="メインメニュー">
-        <a href="#calendar" data-view="calendar"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg><span>カレンダー</span></a>
-        <a href="#schedule" data-view="schedule"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg><span>予定</span></a>
-        <a href="#chat" data-view="chat"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>チャット</span><span class="nav-count alert chat-badge" hidden></span></a>
-        <a href="#groups" data-view="groups"><svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8"/></svg><span>グループ</span><span class="nav-count group-count" hidden></span></a>
+        <a class="active" href="#calendar">カレンダー</a>
+        <a href="#friends">友だち <span class="nav-count">4</span></a>
       </nav>
       <div class="profile-area">
-        <button class="call-pill" id="callPill" hidden><span class="pulse"></span>通話中 <span class="call-pill-time"></span></button>
-        <div class="menu-wrap">
-          <button class="icon-button notification-button" id="notifButton" aria-label="通知" aria-haspopup="true" aria-expanded="false">
-            <svg class="icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><i hidden></i>
-          </button>
-          <div class="dropdown notif-panel" id="notifPanel" hidden></div>
-        </div>
-        <div class="menu-wrap">
-          <button class="profile" id="profileButton" aria-haspopup="true" aria-expanded="false"></button>
-          <div class="dropdown profile-menu" id="profileMenu" hidden>
-            <button data-profile="rename">ニックネームを変更</button>
-            <button data-profile="code">ログインコード（ほかの端末で使う）</button>
-            <button data-profile="notify">ブラウザ通知をオンにする</button>
-            <button data-profile="logout" class="danger-text">ログアウト</button>
-          </div>
-        </div>
+        <button class="icon-button notification-button" aria-label="通知"><span class="bell-icon">♢</span><i></i></button>
+        <div class="profile"><span class="avatar">み</span><span class="profile-name">みつき</span><span class="chevron">⌄</span></div>
       </div>
     </header>
-    <div class="connection-banner" id="connectionBanner" role="status" hidden>サーバーに再接続しています…</div>
 
-    <main class="content">
-      <!-- カレンダー -->
-      <section class="view" id="view-calendar" aria-label="カレンダー">
-        <section class="intro-row">
-          <div>
-            <p class="eyebrow">MY SCHEDULE <span></span> CALENDAR</p>
-            <h1>予定を合わせて、<br><em>放課後をもっと楽しく。</em></h1>
-          </div>
-          <button class="primary-button" id="openEventForm"><span>＋</span> 予定を追加</button>
-        </section>
-        <div class="filter-row" id="sourceFilter" aria-label="表示する予定"></div>
-        <section class="calendar-layout">
-          <div class="calendar-card">
-            <div class="calendar-toolbar">
-              <div class="month-heading">
-                <button class="month-arrow" id="prevPeriod" aria-label="前へ">‹</button>
-                <h2 id="periodLabel" aria-live="polite"></h2>
-                <button class="month-arrow" id="nextPeriod" aria-label="次へ">›</button>
-              </div>
-              <div class="view-controls">
-                <button class="today-button" id="todayButton">今日</button>
-                <div class="view-toggle" id="viewToggle" role="group" aria-label="表示切り替え"><button data-mode="month">月</button><button data-mode="week">週</button></div>
-              </div>
-            </div>
-            <div id="calendarBody" class="calendar-body"></div>
-          </div>
-          <aside class="side-panel" id="sidePanel"></aside>
-        </section>
+    <main class="content" id="calendar">
+      <section class="intro-row">
+        <div>
+          <p class="eyebrow">MY SCHEDULE <span></span> 2025</p>
+          <h1>予定を合わせて、<br><em>放課後をもっと楽しく。</em></h1>
+        </div>
+        <button class="primary-button" id="openModal"><span>＋</span> 予定を追加</button>
       </section>
 
-      <section class="view" id="view-schedule" aria-label="予定の管理" hidden></section>
-      <section class="view" id="view-chat" aria-label="グループチャット" hidden></section>
-      <section class="view" id="view-groups" aria-label="グループ" hidden></section>
+      <section class="calendar-layout">
+        <div class="calendar-card">
+          <div class="calendar-toolbar">
+            <div class="month-heading"><button class="month-arrow" id="prevMonth" aria-label="前の月">‹</button><h2 id="monthLabel"></h2><button class="month-arrow" id="nextMonth" aria-label="次の月">›</button></div>
+            <div class="view-controls"><button class="today-button" id="todayButton">今日</button><div class="view-toggle"><button class="selected">月</button><button>週</button></div></div>
+          </div>
+          <div class="weekday-row"><span>月</span><span>火</span><span>水</span><span>木</span><span>金</span><span class="weekend">土</span><span class="weekend">日</span></div>
+          <div class="calendar-grid" id="calendarGrid"></div>
+        </div>
+
+        <aside class="side-panel">
+          <div class="side-heading"><div><p class="eyebrow">UP NEXT</p><h2>これからの予定</h2></div><button class="more-button" aria-label="予定をもっと見る">•••</button></div>
+          <div class="upcoming-list" id="upcomingList"></div>
+          <button class="text-button" id="showAll">すべての予定を見る <span>→</span></button>
+          <div class="friends-box" id="friends"><div class="friends-title"><h3>友だちの予定</h3><span>4人</span></div><div class="friend-avatars"><span class="friend-avatar coral">あ</span><span class="friend-avatar yellow">ゆ</span><span class="friend-avatar blue">け</span><span class="friend-avatar green">＋</span></div><p>友だちの空き時間をチェックしよう。</p></div>
+        </aside>
+      </section>
     </main>
   </div>
 
   <div class="modal-backdrop" id="modal" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
-      <button class="modal-close" aria-label="閉じる">×</button>
-      <div id="modalBody"></div>
+      <button class="modal-close" id="closeModal" aria-label="閉じる">×</button>
+      <p class="eyebrow">NEW PLAN</p><h2 id="modalTitle">予定を追加する</h2>
+      <form id="eventForm"><label>予定のタイトル<input id="eventTitle" type="text" placeholder="例：図書館で勉強" required></label><div class="form-row"><label>日付<input id="eventDate" type="date" required></label><label>時間<input id="eventTime" type="time" value="16:30"></label></div><label>カテゴリー<select id="eventCategory"><option value="study">勉強</option><option value="play">遊び</option><option value="club">部活</option><option value="food">ごはん</option></select></label><button class="primary-button submit-button" type="submit">予定を保存する</button></form>
     </div>
   </div>
-  <div class="call-overlay" id="callOverlay" hidden></div>
-  <div class="toasts" id="toasts" aria-live="polite"></div>
-  <script type="module" src="app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
