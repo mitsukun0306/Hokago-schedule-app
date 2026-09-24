@@ -1,0 +1,151 @@
+rules_version = '2';
+
+// Afterclass の Firestore セキュリティルール
+// Firebase コンソール → Firestore Database → ルール に貼り付けて「公開」してください。
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function myId() {
+      return request.auth.uid;
+    }
+
+    function groupPath(gid) {
+      return /databases/$(database)/documents/groups/$(gid);
+    }
+
+    function isMember(gid) {
+      return signedIn() && exists(groupPath(gid)) && myId() in get(groupPath(gid)).data.members;
+    }
+
+    // 同じ書き込み（バッチ）の結果、メンバーになっているか
+    function isMemberAfter(gid) {
+      return signedIn() && myId() in getAfter(groupPath(gid)).data.members;
+    }
+
+    function validName(value, max) {
+      return value is string && value.size() > 0 && value.size() <= max;
+    }
+
+    // --- ユーザー（名前・色・予定のある時間帯。タイトルは持たない） ---
+    match /users/{userId} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && myId() == userId
+        && validName(request.resource.data.name, 20)
+        && request.resource.data.busy is list
+        && request.resource.data.busy.size() <= 500;
+      allow delete: if false;
+    }
+
+    // --- 招待コード（コードを知っている人だけが1件ずつ読める） ---
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create, update: if isMemberAfter(request.resource.data.groupId)
+        && getAfter(groupPath(request.resource.data.groupId)).data.inviteCode == code;
+      allow delete: if isMember(resource.data.groupId);
+    }
+
+    // --- グループ ---
+    match /groups/{gid} {
+      allow read: if signedIn() && myId() in resource.data.members;
+
+      allow create: if signedIn()
+        && request.resource.data.ownerId == myId()
+        && request.resource.data.members == [myId()]
+        && validName(request.resource.data.name, 30);
+
+      allow update: if signedIn() && (
+        // メンバーによる変更: 名前・招待コードの変更、自分の退出（ほかの人を追加・削除はできない）
+        (
+          myId() in resource.data.members
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'inviteCode', 'members', 'ownerId'])
+          && validName(request.resource.data.name, 30)
+          && request.resource.data.members.toSet().difference(resource.data.members.toSet()).size() == 0
+          && resource.data.members.toSet().difference(request.resource.data.members.toSet()).hasOnly([myId()])
+          && request.resource.data.ownerId in request.resource.data.members
+        )
+        ||
+        // 招待コードを知っている人の参加: 自分を members に足すだけ
+        (
+          !(myId() in resource.data.members)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members'])
+          && request.resource.data.members.toSet() == resource.data.members.toSet().union([myId()].toSet())
+          && getAfter(/databases/$(database)/documents/groups/$(gid)/joins/$(myId())).data.code == resource.data.inviteCode
+        )
+      );
+
+      // 最後の1人が退出するときだけ削除できる
+      allow delete: if signedIn() && resource.data.members == [myId()];
+
+      // 参加するときに入力した招待コードの記録
+      match /joins/{userId} {
+        allow create, update: if signedIn() && myId() == userId && request.resource.data.code is string;
+        allow read, delete: if false;
+      }
+
+      match /messages/{mid} {
+        allow read: if isMember(gid);
+        allow create: if isMember(gid)
+          && request.resource.data.userId == myId()
+          && request.resource.data.kind in ['text', 'event', 'system', 'call']
+          && request.resource.data.text is string
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.deleted == false;
+        // 自分のメッセージの削除（中身を消して deleted にする）だけ
+        allow update: if isMember(gid)
+          && resource.data.userId == myId()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deleted', 'text', 'eventId'])
+          && request.resource.data.deleted == true
+          && request.resource.data.text == '';
+        allow delete: if false;
+      }
+
+      // 通話の参加者（心拍が止まった参加者は、ほかのメンバーが片付けられる）
+      match /call/{cid} {
+        allow read, delete: if isMember(gid);
+        allow create, update: if isMember(gid) && request.resource.data.userId == myId();
+      }
+    }
+
+    // --- 通話のシグナリング（宛先の人だけが読める） ---
+    match /signals/{sid} {
+      allow read: if signedIn() && resource.data.toUser == myId();
+      allow create: if signedIn()
+        && request.resource.data.fromUser == myId()
+        && isMember(request.resource.data.groupId);
+      allow delete: if signedIn() && (resource.data.toUser == myId() || resource.data.fromUser == myId());
+      allow update: if false;
+    }
+
+    // --- 予定 ---
+    match /events/{eid} {
+      function canSee(data) {
+        return data.groupId == null ? data.ownerId == myId() : isMember(data.groupId);
+      }
+
+      allow read: if signedIn() && canSee(resource.data);
+
+      allow create: if signedIn()
+        && request.resource.data.ownerId == myId()
+        && canSee(request.resource.data)
+        && validName(request.resource.data.title, 60);
+
+      // グループのメンバーは編集・出欠ができる。共有先を変えられるのは作成した人だけ
+      allow update: if signedIn()
+        && canSee(resource.data)
+        && canSee(request.resource.data)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && (request.resource.data.groupId == resource.data.groupId || resource.data.ownerId == myId())
+        && validName(request.resource.data.title, 60);
+
+      allow delete: if signedIn() && (
+        resource.data.ownerId == myId()
+        || (resource.data.groupId != null && get(groupPath(resource.data.groupId)).data.ownerId == myId())
+      );
+    }
+  }
+}

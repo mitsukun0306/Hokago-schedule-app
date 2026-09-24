@@ -1,5 +1,5 @@
 // 予定の作成・編集・詳細・共有
-import { api } from './api.js';
+import * as backend from './backend.js';
 import { state, userName, groupList, notify } from './state.js';
 import {
   $, $$, esc, CATEGORIES, REPEAT_LABELS, REMINDER_LABELS, RSVP_LABELS,
@@ -127,8 +127,8 @@ export function openEventForm({ event = null, date, start, end, groupId } = {}) 
     if (!draft.allDay && draft.end && draft.end <= draft.start) return fail('終了時刻は開始時刻より後にしてください');
     withBusy($('.submit-button', form), async () => {
       try {
-        const { event: saved } = editing ? await api('PUT', `/api/events/${event.id}`, draft) : await api('POST', '/api/events', draft);
-        applyEvent(saved);
+        const saved = editing ? await backend.updateEvent(event, draft) : await backend.createEvent(draft);
+        if (!state.events.has(saved.id)) applyEvent(saved);
         state.selectedDate = saved.date;
         state.cursor = saved.date;
         notify();
@@ -260,8 +260,7 @@ function bindDetail(body) {
 export async function setRsvp(eventId, status, button) {
   await withBusy(button, async () => {
     try {
-      const { event } = await api('POST', `/api/events/${eventId}/rsvp`, { status });
-      applyEvent(event);
+      await backend.setRsvp(eventId, status);
       refreshEventDetail();
     } catch (error) {
       toastError(error);
@@ -278,7 +277,7 @@ async function deleteEvent(event) {
   });
   if (!ok) return;
   try {
-    await api('DELETE', `/api/events/${event.id}`);
+    await backend.deleteEvent(event);
     state.events.delete(event.id);
     notify();
     closeModal();
@@ -317,7 +316,7 @@ function shareToChat(event, date) {
   const send = async (groupId) => {
     try {
       const payload = event.groupId === groupId ? { eventId: event.id, text: '' } : { text: eventAsText(event, date) };
-      await api('POST', `/api/groups/${groupId}/messages`, payload);
+      await backend.sendMessage(groupId, payload);
       toast(`「${state.groups.get(groupId).name}」に送りました`, { type: 'success' });
     } catch (error) {
       toastError(error);

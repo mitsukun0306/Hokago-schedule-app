@@ -1,5 +1,5 @@
 // グループチャット
-import { api } from './api.js';
+import * as backend from './backend.js';
 import { state, notify, groupList, userName, unreadCount, markRead } from './state.js';
 import {
   $, esc, CATEGORIES, RSVP_LABELS, formatDateJa, formatTimeRange, formatClock, formatDuration, relativeDay, toKey,
@@ -50,7 +50,7 @@ export function initChat() {
     } else if (action === 'delete-message') {
       const id = e.target.closest('[data-message]').dataset.message;
       if (await confirmDialog({ title: 'メッセージを削除しますか？', message: 'グループの全員の画面から消えます。', confirmLabel: '削除する', danger: true })) {
-        api('DELETE', `/api/messages/${id}`).catch(toastError);
+        backend.deleteMessage(groupId, id).catch(toastError);
       }
     }
     const eventCard = e.target.closest('[data-event-card]');
@@ -103,7 +103,7 @@ async function send() {
   const button = $('#composer .send-button');
   await withBusy(button, async () => {
     try {
-      await api('POST', `/api/groups/${groupId}/messages`, { text });
+      await backend.sendMessage(groupId, { text });
       input.value = '';
       drafts.delete(groupId);
       autosize(input);
@@ -130,7 +130,7 @@ function pickEvent(groupId) {
     const pick = e.target.closest('[data-pick]');
     if (pick) {
       try {
-        await api('POST', `/api/groups/${groupId}/messages`, { eventId: pick.dataset.pick, text: '' });
+        await backend.sendMessage(groupId, { eventId: pick.dataset.pick });
         closeModal();
       } catch (error) {
         toastError(error);
